@@ -91,29 +91,38 @@ function isCustodyMeteringRelated(title, summary){
 
 // Fetch
 async function collect(){
-  const all = [];
-  for (const url of feeds()){
-    try{
-      const f = await parser.parseURL(url);
-      for (const it of (f.items||[])){
-        const title = it.title || "";
-        const link  = unwrapGoogle(it.link || "");
-        const sum   = (it.contentSnippet || it.content || "").replace(/\s+/g," ").trim();
-        if (!isCustodyMeteringRelated(title, sum)) continue;
+  const urls = feeds;                 // existing array of feed URLs
+  const out = [];
+  const CHUNK = 8;                    // concurrency (8 parallel fetches)
+  const toItem = (feed, it) => {
+    const title = it.title || "";
+    const link  = unwrapGoogle(it.link || "");
+    const sum   = (it.contentSnippet || it.content || "").replace(/\s+/g," ").trim();
+    if (!isCustodyMeteringRelated(title, sum)) return null;
+    return {
+      title,
+      url: link,
+      sourceName: hostOf(link) || (feed.title ?? "News"),
+      publishedAt: it.isoDate || it.pubDate || new Date().toISOString(),
+      summary: sum.slice(0,240),
+      category: guessCategory(title)
+    };
+  };
 
-        all.push({
-          title,
-          url: link,
-          sourceName: hostOf(link) || (f.title ?? "News"),
-          publishedAt: it.isoDate || it.pubDate || new Date().toISOString(),
-          summary: sum.slice(0,240),
-          category: guessCategory(title)
-        });
+  for (let i = 0; i < urls.length; i += CHUNK) {
+    const slice = urls.slice(i, i + CHUNK);
+    const results = await Promise.all(slice.map(u => parser.parseURL(u).catch(() => null)));
+    for (const feed of results) {
+      if (!feed || !feed.items) continue;
+      for (const it of feed.items) {
+        const item = toItem(feed, it);
+        if (item) out.push(item);
       }
-    }catch(e){ console.error("Feed error:", url, e.message); }
+    }
   }
-  return all;
+  return out;
 }
+
 
 function withinDays(iso, days){ const t = new Date(iso).getTime(); return t >= (Date.now() - days*864e5); }
 function dedupeAndSort(raw){
