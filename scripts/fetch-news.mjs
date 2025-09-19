@@ -1,18 +1,26 @@
 // scripts/fetch-news.mjs
-// ULTRA-SAFE: Global metering / custody-transfer / flowmeter / calibration-lab news
-// via Google News RSS (no API keys). Broad but still blocks finance/legal "custody".
+// CURATED-ONLY fallback: always yields metering/flow/calibration items (no API keys)
 
 import fs from "fs/promises";
 import path from "path";
 import Parser from "rss-parser";
 
-const OUT_FILE    = "public/news.latest.json";
-const DEBUG_FILE  = "public/news.debug.txt";
-const FRESH_DAYS  = 60;     // keep last 60 days
-const MAX_ITEMS   = 30;     // cap output
-const CONCURRENCY = 10;     // parallel RSS fetches
+const OUT_FILE   = "public/news.latest.json";
+const DEBUG_FILE = "public/news.debug.txt";
+const MAX_ITEMS  = 30;
+const CONCURRENCY = 8;
 
-// Parser with browser-like headers
+const CURATED_RSS = [
+  // Trade / industry (reliable)
+  "https://www.lngindustry.com/rss/",
+  "https://www.hydrocarbonengineering.com/rss/",
+  "https://www.pipeline-journal.net/rss.xml",
+  // Vendor / instrumentation blogs (general measurement; we’ll filter)
+  "https://www.emersonautomationexperts.com/feed/",
+  "https://blog.krohne.com/feed/",
+  "https://press.siemens.com/global/en/rss"
+];
+
 const parser = new Parser({
   timeout: 15000,
   maxRedirects: 5,
@@ -24,131 +32,60 @@ const parser = new Parser({
   }
 });
 
-// English editions
-const EDITIONS = [
-  { hl: "en-US", gl: "US", ceid: "US:en" },
-  { hl: "en-GB", gl: "GB", ceid: "GB:en" },
-  { hl: "en-SG", gl: "SG", ceid: "SG:en" },
-  { hl: "en-MY", gl: "MY", ceid: "MY:en" },
-  { hl: "en-AE", gl: "AE", ceid: "AE:en" },
-  { hl: "en-IN", gl: "IN", ceid: "IN:en" }
-];
+function hostOf(url){ try{ return new URL(url).hostname.replace(/^www\./,''); } catch { return ""; } }
+const norm = s => (s||"").trim().toLowerCase().replace(/\s+/g," ").slice(0,180);
 
-// Broad but relevant queries (custody/fiscal/metering/flow/calibration)
-const QUERIES = [
-  '"custody transfer" meter',
-  '"custody transfer" flow',
-  '"fiscal metering"',
-  '"meter proving" OR "pipe prover" OR prover',
-  '"LACT unit" OR "lease automatic custody transfer"',
-  '"API MPMS" OR "OIML R-117" OR "ISO 17025" metering',
-  '"metering skid" OR "metering station" custody',
-  '"LNG fiscal metering" OR "gas fiscal metering"',
-  '"ultrasonic flowmeter" OR "ultrasonic meter"',
-  '"coriolis flowmeter" OR "coriolis meter"',
-  '"turbine meter" OR "orifice plate" metering',
-  '"flowmeter calibration" OR "flow calibration" OR "calibration lab" metering',
-  '"flow computer" OR "gas chromatograph" metering',
-  '"flow meter" oil OR gas',
-  '"metering system" oil OR gas'
-];
+const RX_KEEP = /\b(custody transfer|fiscal|mpms|oiml|r-?117|iso\s*17025|meter(?:ing|s)?|flow ?meter|flowmeter|prover|meter proving|pipe prover|lact|lease automatic custody transfer|metering (?:skid|station)|ultrasonic|coriolis|turbine meter|orifice (?:plate|meter)|flow computer|gas chromatograph|calibration|metrology)\b/i;
+const RX_DROP = /\b(etf|crypto|bitcoin|token|securit(?:y|ies)|custody bank|asset management|child custody|police custody|detention|crime)\b/i;
+const RX_UTILITY = /\b(electric|electricity|power|smart|water)\s+meter(s)?\b/i; // de-rank
 
-// Curated industry RSS (no keys; script skips any feed that fails)
-const CUSTOM_RSS = [
-  // Trade / industry
-  "https://www.lngindustry.com/rss/",
-  "https://www.hydrocarbonengineering.com/rss/",
-  "https://www.pipeline-journal.net/rss.xml",
-
-  // Vendor / instrumentation blogs (general measurement; we filter by keywords)
-  "https://www.emersonautomationexperts.com/feed/",
-  "https://blog.krohne.com/feed/",
-  "https://measurementresources.yokogawa.com/rss.xml",       // if 404, script will skip
-  "https://new.abb.com/measuring-analytics/-/feed/rss",       // if 404, skip
-  "https://press.siemens.com/global/en/rss"                    // general Siemens press
-];
-
-
-const gnrss = (q, ed) =>
-  `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${ed.hl}&gl=${ed.gl}&ceid=${ed.ceid}`;
-
-async function fetchCustomFeeds(urls){
-  const results = await Promise.all(urls.map(u => parser.parseURL(u).catch(() => null)));
-  return results.filter(Boolean);
+function relevanceScore(title, summary){
+  const t = ((title||"") + " " + (summary||"")).toLowerCase();
+  if (RX_DROP.test(t)) return -9999;
+  if (!RX_KEEP.test(t)) return -999;
+  let s = 1;
+  if (RX_UTILITY.test(t)) s -= 2;
+  if (/custody transfer|fiscal|mpms|oiml|iso\s*17025/i.test(t)) s += 4;
+  if (/prover|meter proving|lact/i.test(t)) s += 2;
+  if (/ultrasonic|coriolis|turbine|orifice|flow computer|gas chromatograph/i.test(t)) s += 1;
+  return s;
 }
 
-
-function buildFeeds(){
-  const feeds = [];
-  for (const ed of EDITIONS) for (const q of QUERIES) feeds.push(gnrss(q, ed));
-  return feeds;
-}
-const FEEDS = buildFeeds();
-
-// Helpers
-function unwrapGoogle(href){
-  try{
-    const u = new URL(href);
-    if (u.hostname.includes("news.google.com") && u.searchParams.has("url")) {
-      return u.searchParams.get("url");
-    }
-  }catch(_){}
-  return href;
-}
-function hostOf(url){ try{ return new URL(url).hostname.replace(/^www\./,''); }catch{ return ''; } }
-const norm = s => (s||'').trim().toLowerCase().replace(/\s+/g,' ').slice(0,180);
-function withinDays(iso, days){ return new Date(iso).getTime() >= (Date.now() - days*864e5); }
-
-// Simple category guess (for UI chip)
-function guessCategory(title){
-  const t = (title||'').toLowerCase();
-  if (/\bmpms\b|\boiml\b|r-117|\biso\s*17025\b/.test(t)) return 'Standards';
-  if (/\bprover\b|\blact\b|\bultrasonic\b|\bcoriolis\b|\bturbine\b|\borifice\b|\bflowmeter\b|\bflow computer\b|\bgas chromatograph\b/.test(t)) return 'Technology';
-  if (/\bcontract\b|\bawarded\b|\bterminal\b|\bproject\b|\btender\b/.test(t)) return 'Projects';
-  if (/\bcalibration\b|\bmetrology\b|\blab\b|\btraceabilit(y|ies)\b/.test(t)) return 'Research';
-  return 'Update';
-}
-
-// Ultra-safe relevance:
-//  • keep if it mentions metering/flow/calibration terms
-//  • drop obvious finance/legal "custody" noise
-// In the Ultra-Safe version, replace the relevance check:
-const RX_KEEP = /\b(flow ?meter|flowmeter|meter(?:ing|s)?|prover|meter proving|pipe prover|lact|lease automatic custody transfer|metering (?:skid|station)|ultrasonic|coriolis|turbine meter|orifice (?:plate|meter)|flow computer|gas chromatograph|calibration|metrology)\b/;
-// keep anything that hits RX_KEEP
-const RX_DROP = /\b(etf|crypto|bitcoin|token|securit(?:y|ies)|custody bank|asset management|child custody|police custody|detention|crime)\b/;
-
-function isRelevant(title, summary){
-  const t = ((title||'') + ' ' + (summary||'')).toLowerCase();
-  if (RX_DROP.test(t)) return false;
-  return RX_KEEP.test(t);
-}
-
-// Batch parse in parallel
 async function parseBatch(urls){
-  const results = await Promise.all(urls.map(u => parser.parseURL(u).catch(() => null)));
-  return results.filter(Boolean);
+  const res = await Promise.all(urls.map(u => parser.parseURL(u).catch(() => null)));
+  return res.filter(Boolean);
 }
 
 function itemsFromFeeds(feeds){
   const out = [];
   for (const f of feeds){
     for (const it of (f.items||[])){
-      const title = it.title || '';
-      const link  = unwrapGoogle(it.link || '');
-      const sum   = (it.contentSnippet || it.content || '').replace(/\s+/g,' ').trim();
-      if (!isRelevant(title, sum)) continue;
-
+      const title = it.title || "";
+      const link  = it.link  || "";
+      const sum   = (it.contentSnippet || it.content || "").replace(/\s+/g," ").trim();
+      const score = relevanceScore(title, sum);
+      if (score < 0) continue;
       out.push({
         title,
         url: link,
-        sourceName: hostOf(link) || (f.title ?? 'News'),
+        sourceName: hostOf(link) || (f.title ?? "News"),
         publishedAt: it.isoDate || it.pubDate || new Date().toISOString(),
         summary: sum.slice(0,240),
-        category: guessCategory(title)
+        category: guessCategory(title),
+        _score: score
       });
     }
   }
   return out;
+}
+
+function guessCategory(title){
+  const t = (title||"").toLowerCase();
+  if (/\bmpms\b|\boiml\b|r-117|\biso\s*17025\b/.test(t)) return "Standards";
+  if (/\bprover\b|\blact\b|\bultrasonic\b|\bcoriolis\b|\bturbine\b|\borifice\b|\bflowmeter\b|\bflow computer\b|\bgas chromatograph\b/.test(t)) return "Technology";
+  if (/\bcontract\b|\bawarded\b|\bterminal\b|\bproject\b|\btender\b/.test(t)) return "Projects";
+  if (/\bcalibration\b|\bmetrology\b|\blab\b/.test(t)) return "Research";
+  return "Update";
 }
 
 function dedupeSortCap(raw){
@@ -160,48 +97,51 @@ function dedupeSortCap(raw){
     if (seen.has(key)) continue;
     seen.add(key); out.push(it);
   }
-  out.sort((a,b) => new Date(b.publishedAt) - new Date(a.publishedAt));
-  return out.slice(0, MAX_ITEMS);
+  out.sort((a,b) => (b._score - a._score) || (new Date(b.publishedAt) - new Date(a.publishedAt)));
+  return out.slice(0, MAX_ITEMS).map(({_score, ...rest}) => rest);
+}
+
+async function readPreviousItems(){
+  try{
+    const buf = await fs.readFile(OUT_FILE, "utf8");
+    const json = JSON.parse(buf);
+    return Array.isArray(json.items) ? json.items : [];
+  }catch{ return []; }
 }
 
 async function main(){
-  // 1) Google News feeds
-  const urls = FEEDS;
-  const allFeeds = [];
-  for (let i = 0; i < urls.length; i += CONCURRENCY){
-    const batch = urls.slice(i, i + CONCURRENCY);
-    const feeds = await parseBatch(batch);
-    allFeeds.push(...feeds);
+  // 1) fetch curated feeds in parallel
+  const feeds = [];
+  for (let i=0; i<CURATED_RSS.length; i+=CONCURRENCY){
+    const batch = CURATED_RSS.slice(i, i+CONCURRENCY);
+    const got = await parseBatch(batch);
+    feeds.push(...got);
   }
-  let raw = itemsFromFeeds(allFeeds).filter(i => withinDays(i.publishedAt, FRESH_DAYS));
+  let raw = itemsFromFeeds(feeds);
+  let items = dedupeSortCap(raw);
 
-  // 2) Curated RSS feeds (add BEFORE dedupe/sort)
-  const customFeeds = await fetchCustomFeeds(CUSTOM_RSS);
-  raw.push(
-    ...itemsFromFeeds(customFeeds).filter(i => withinDays(i.publishedAt, FRESH_DAYS))
-  );
+  // 2) never overwrite with empty: keep previous non-empty list
+  if (items.length === 0){
+    const prev = await readPreviousItems();
+    if (prev.length) items = prev;
+  }
 
-  // 3) Dedupe/sort/cap ONCE over combined items
-  const items = dedupeSortCap(raw);
-
-  // 4) Write outputs (JSON + debug)
+  // 3) write outputs
   const payload = {
-  updatedAt: new Date().toISOString(),
-  items,
-  meta: { feedsTried: urls.length + CUSTOM_RSS.length, kept: items.length }
-};
+    updatedAt: new Date().toISOString(),
+    items,
+    meta: { feedsTried: CURATED_RSS.length, kept: items.length }
+  };
 
-await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
-await fs.writeFile(OUT_FILE, JSON.stringify(payload, null, 2), "utf8");
-await fs.writeFile("public/news.debug.txt",
-  `${new Date().toISOString()}
+  await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
+  await fs.writeFile(OUT_FILE, JSON.stringify(payload, null, 2), "utf8");
+  await fs.writeFile(DEBUG_FILE,
+    `${new Date().toISOString()}
 feeds tried: ${payload.meta.feedsTried}
 items kept: ${payload.meta.kept}
 `, "utf8");
 
-
   console.log(`Wrote ${items.length} items to ${OUT_FILE}`);
 }
-
 
 main().catch(err => { console.error(err); process.exit(1); });
