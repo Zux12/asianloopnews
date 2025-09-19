@@ -83,8 +83,9 @@ const logo = ce('img', { className: 'al-news-logo', alt: 'Asianloop', src: (wind
 // fallback if logo 404s
 logo.addEventListener('error', ()=>{
   logo.src = 'data:image/svg+xml;utf8,' +
-    encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#0f62fe"/><text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial" font-weight="700" font-size="14" fill="#fff">AL</text></svg>');
+    encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><rect width="28" height="28" rx="7" fill="#0f62fe"/><text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial" font-weight="800" font-size="12" fill="#fff">AL</text></svg>');
 });
+
 const title = ce('div', { className: 'al-news-title', id:'al-news-title', textContent: 'Latest Custody-Metering News' });
 
     const spacer = ce('div', { className: 'al-news-spacer' });
@@ -127,24 +128,28 @@ els.modal.append(hdr, els.body, ftr);
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') close(); });
   }
 
- function render(items){
+function render(items){
   els.body.innerHTML = '';
   if (!items || !items.length){
     els.body.append(ce('div', { className:'al-news-meta', textContent:'No new items in the last 3 days.' }));
     return;
   }
 
-  // Top story
   const top = items[0];
   const topHref = normalizeLink(top.url);
   const topHost = hostFrom(topHref) || (top.sourceName||'');
 
   const topEl = ce('div', { className:'al-news-top' });
-  const meta = ce('div', { className:'al-news-meta', textContent:`${top.category||'Update'} · ${fmtRel(top.publishedAt)} · ${topHost}` });
+  const meta = ce('div', { className:'al-news-meta' });
+  const chip = ce('span', { className:'al-badge', textContent: (top.category||'Update') });
+  meta.append(chip, document.createTextNode(`· ${fmtRel(top.publishedAt)} · ${topHost}`));
+
   const h3 = ce('h3');
   const aTop = ce('a', { href: topHref, target:'_blank', rel:'noopener', textContent: top.title });
   h3.append(aTop);
+
   const sum = ce('div', { className:'al-news-meta', textContent: top.summary || '' });
+
   const actions = ce('div', { className:'al-news-actions' });
   const read = ce('button', { className:'al-btn primary', textContent:'Read full' });
   read.addEventListener('click', ()=> window.open(topHref, '_blank'));
@@ -154,14 +159,16 @@ els.modal.append(hdr, els.body, ftr);
     window.open(`https://wa.me/?text=${msg}`, '_blank');
   });
   actions.append(read, share);
+
   topEl.append(meta, h3, sum, actions);
   els.body.append(topEl);
 
-  // List container + first batch
+  // List + first batch
   els.list = ce('div', { className:'al-news-list' });
   els.body.append(els.list);
   renderList();
 }
+
 
   function renderList(){
   if (!els.list) return;
