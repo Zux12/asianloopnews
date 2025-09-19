@@ -268,15 +268,12 @@
     }
   }
 
-  function shouldAutoShow() {
-    // snooze check
-    const snoozeUntil = localStorage.getItem(CFG.localKey);
-    if (snoozeUntil && new Date(snoozeUntil).getTime() > now()) return false;
+function shouldAutoShow(){
+  const snoozeUntil = localStorage.getItem(CFG.localKey);
+  if (snoozeUntil && new Date(snoozeUntil).getTime() > now()) return false;
+  return true; // always show after 5s unless user snoozed it
+}
 
-    // gate
-    if (CFG.requireFreshForAutoShow) return state.fresh;
-    return state.items.length > 0; // <<< show if we have any items
-  }
 
   // ------- Boot -------
   document.addEventListener("DOMContentLoaded", async () => {
