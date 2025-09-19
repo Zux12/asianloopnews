@@ -1,0 +1,37 @@
+{
+  "updatedAt": "2025-09-19T04:00:00Z",
+  "items": [
+    {
+      "title": "API MPMS 21.1 draft opens for comments",
+      "url": "https://api.org/example-article",
+      "sourceName": "api.org",
+      "publishedAt": "2025-09-18T08:10:00Z",
+      "summary": "Draft revision invites feedback on digital measurement data handling and custody reporting.",
+      "category": "Standards"
+    },
+    {
+      "title": "New ultrasonic custody meter qualified for LNG terminals",
+      "url": "https://example.com/ultrasonic-lng",
+      "sourceName": "Vendor News",
+      "publishedAt": "2025-09-18T02:05:00Z",
+      "summary": "Higher turndown and built-in diagnostics for cryogenic conditions.",
+      "category": "Technology"
+    },
+    {
+      "title": "Pipe prover contract awarded in the Middle East",
+      "url": "https://upstreamonline.com/prover-award",
+      "sourceName": "UpstreamOnline",
+      "publishedAt": "2025-09-17T13:30:00Z",
+      "summary": "Scope includes bi-directional prover and ISO 17025-compliant procedures.",
+      "category": "Projects"
+    },
+    {
+      "title": "ISO 17025 metering lab expansion announced in APAC",
+      "url": "https://example.com/lab-expansion",
+      "sourceName": "Industry Wire",
+      "publishedAt": "2025-09-16T11:00:00Z",
+      "summary": "Capacity boost for liquid & gas custody calibration; new prover sizes.",
+      "category": "Research"
+    }
+  ]
+}
