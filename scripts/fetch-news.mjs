@@ -53,6 +53,22 @@ const QUERIES = [
   '"metering system" oil OR gas'
 ];
 
+// Curated industry RSS (no keys; script skips any feed that fails)
+const CUSTOM_RSS = [
+  // Trade / industry
+  "https://www.lngindustry.com/rss/",
+  "https://www.hydrocarbonengineering.com/rss/",
+  "https://www.pipeline-journal.net/rss.xml",
+
+  // Vendor / instrumentation blogs (general measurement; we filter by keywords)
+  "https://www.emersonautomationexperts.com/feed/",
+  "https://blog.krohne.com/feed/",
+  "https://measurementresources.yokogawa.com/rss.xml",       // if 404, script will skip
+  "https://new.abb.com/measuring-analytics/-/feed/rss",       // if 404, skip
+  "https://press.siemens.com/global/en/rss"                    // general Siemens press
+];
+
+
 const gnrss = (q, ed) =>
   `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${ed.hl}&gl=${ed.gl}&ceid=${ed.ceid}`;
 
