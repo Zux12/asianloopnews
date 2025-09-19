@@ -95,20 +95,21 @@ const title = ce('div', { className: 'al-news-title', id:'al-news-title', textCo
     // body
     els.body = ce('div', { className: 'al-news-body' });
     // footer
-    const ftr = ce('div', { className: 'al-news-footer' });
-    const label = ce('label');
-    const cb = ce('input', { type:'checkbox', id:'al-news-snooze' });
-    const cbText = ce('span', { textContent: "Don’t show again this week" });
-    label.append(cb, cbText);
-    cb.addEventListener('change', (e)=>{
-      if (e.target.checked) localStorage.setItem(CFG.localKey, addDays(CFG.snoozeDays).toISOString());
-      else localStorage.removeItem(CFG.localKey);
-    });
-    const trailing = ce('div', { className:'trailing' });
+const ftr = ce('div', { className:'al-news-footer' });
+const label = ce('label');
+const cb = ce('input', { type:'checkbox', id:'al-news-snooze' });
+const cbText = ce('span', { textContent: "Don’t show again this week" });
+label.append(cb, cbText);
+cb.addEventListener('change', (e)=>{
+  if (e.target.checked) localStorage.setItem(CFG.localKey, addDays(CFG.snoozeDays).toISOString());
+  else localStorage.removeItem(CFG.localKey);
+});
+
+const trailing = ce('div', { className:'trailing' });
 const btnMore = ce('button', { className:'al-btn', textContent:'Load more' });
 btnMore.addEventListener('click', ()=>{
-  state.visibleCount = Math.min(30, state.visibleCount + 6); // increase by 6, cap at 30
-  renderList(); // append more rows
+  state.visibleCount = Math.min(30, state.visibleCount + 6); // +6 per click, cap 30
+  renderList();                                              // re-render list only
   if (state.visibleCount >= Math.min(30, state.items.length)) btnMore.disabled = true;
 });
 const btnClose2 = ce('button', { className:'al-btn', textContent:'Close' });
@@ -116,9 +117,9 @@ trailing.append(btnMore, btnClose2);
 // keep a reference so we can disable it when all loaded
 els.btnMore = btnMore;
 
-    ftr.append(label, trailing);
+ftr.append(label, trailing);
+els.modal.append(hdr, els.body, ftr);
 
-    els.modal.append(hdr, els.body, ftr);
     document.body.append(els.backdrop, els.modal);
 
     // Backdrop / keyboard
