@@ -4,30 +4,63 @@ import path from "path";
 import Parser from "rss-parser";
 
 const parser = new Parser({
-  timeout: 20000, // 20s
-  maxRedirects: 5
+  timeout: 20000,
+  maxRedirects: 5,
+  requestOptions: {
+    headers: {
+      // Helps avoid some sources returning empty/blocked responses
+      'User-Agent': 'Mozilla/5.0 (compatible; AsianloopNewsBot/1.0; +https://asian-loop.com)',
+      'Accept': 'application/rss+xml, application/xml;q=0.9,*/*;q=0.8'
+    }
+  }
 });
 
+
 // ---- Editable knobs ----
-const FRESH_DAYS = 10;            // collect up to this window (modal still uses 72h auto-show)
-const MAX_ITEMS = 12;             // total items to keep
+const FRESH_DAYS = 30;            // collect up to this window (modal still uses 72h auto-show)
+const MAX_ITEMS = 30;             // total items to keep
 const OUT_FILE = "public/news.latest.json";
 
 // Focused Google News queries (RSS). You can add/remove later.
 const QUERIES = [
-  'custody transfer metering',
+  'custody transfer',
+  'custody metering',
+  'fiscal metering',
   'meter proving OR "pipe prover"',
+  '"LACT unit" custody',
   '"API MPMS" 21.1',
+  '"API MPMS" 5.6',
   '"OIML R-117"',
-  '"ISO 17025" calibration metering',
-  '"LACT unit" custody'
+  '"ISO 17025" calibration',
+  'ultrasonic custody meter OR custody ultrasonic',
+  'coriolis custody transfer',
+  'LNG metering OR LNG custody'
 ];
 
-// Build Google News RSS URL
-const gnrss = (q) =>
-  `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
 
-const feeds = QUERIES.map(gnrss);
+// Build Google News RSS URL
+// Editions to sweep (global English coverage)
+const EDITIONS = [
+  { hl: 'en-US', gl: 'US', ceid: 'US:en' },
+  { hl: 'en-GB', gl: 'GB', ceid: 'GB:en' },
+  { hl: 'en-SG', gl: 'SG', ceid: 'SG:en' },
+  { hl: 'en-MY', gl: 'MY', ceid: 'MY:en' },
+  { hl: 'en-AE', gl: 'AE', ceid: 'AE:en' }
+];
+
+const gnrss = (q, ed) =>
+  `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${ed.hl}&gl=${ed.gl}&ceid=${ed.ceid}`;
+
+function buildFeeds() {
+  const out = [];
+  for (const ed of EDITIONS) {
+    for (const q of QUERIES) out.push(gnrss(q, ed));
+  }
+  return out;
+}
+
+const feeds = buildFeeds();
+
 
 // Helper: domain from URL
 function hostOf(url) {
@@ -42,12 +75,14 @@ const norm = (s) => (s || "").trim().toLowerCase().replace(/\s+/g, " ").slice(0,
 
 // Category guess (very rough)
 function guessCategory(title) {
-  const t = title.toLowerCase();
-  if (t.includes("mpms") || t.includes("oiml") || t.includes("r-117") || t.includes("iso 17025")) return "Standards";
-  if (t.includes("prover") || t.includes("lact") || t.includes("ultrasonic") || t.includes("coriolis")) return "Technology";
-  if (t.includes("contract") || t.includes("awarded") || t.includes("terminal") || t.includes("project")) return "Projects";
-  return "Update";
+  const t = (title || '').toLowerCase();
+  if (/\bmpms\b|\boiml\b|r-117|\biso\s*17025\b/.test(t)) return 'Standards';
+  if (/\bprover\b|\blact\b|\bultrasonic\b|\bcoriolis\b/.test(t)) return 'Technology';
+  if (/\bcontract\b|\bawarded\b|\bterminal\b|\bproject\b|\btender\b/.test(t)) return 'Projects';
+  if (/\bcalibration\b|\bmetrology\b|\blab\b/.test(t)) return 'Research';
+  return 'Update';
 }
+
 
 // Collect and merge
 async function collect() {
