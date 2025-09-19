@@ -30,6 +30,18 @@ jobs:
           node-version: "20"
           cache: "npm"
 
+- name: Ensure lockfile (first run only)
+  run: |
+    if [ ! -f package-lock.json ]; then
+      npm i --package-lock-only --no-audit --fund=false
+      git config user.name "github-actions[bot]"
+      git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      git add package-lock.json
+      git commit -m "Add package-lock.json [skip ci]" || true
+      git push || true
+    fi
+
+
       - name: Install dependencies
         run: |
           if [ -f package-lock.json ]; then
