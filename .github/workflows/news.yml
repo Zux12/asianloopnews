@@ -38,6 +38,7 @@ jobs:
       - name: Build feed
         run: npm run build:news
 
+# .github/workflows/news.yml  (replace the commit step)
 - name: Commit changes (if any)
   run: |
     git config user.name "github-actions[bot]"
@@ -49,6 +50,7 @@ jobs:
       git commit -m "Update news feed [skip ci]"
       git push
     fi
+
 
 
 
