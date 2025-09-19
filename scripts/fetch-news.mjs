@@ -72,6 +72,12 @@ const CUSTOM_RSS = [
 const gnrss = (q, ed) =>
   `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${ed.hl}&gl=${ed.gl}&ceid=${ed.ceid}`;
 
+async function fetchCustomFeeds(urls){
+  const results = await Promise.all(urls.map(u => parser.parseURL(u).catch(() => null)));
+  return results.filter(Boolean);
+}
+
+
 function buildFeeds(){
   const feeds = [];
   for (const ed of EDITIONS) for (const q of QUERIES) feeds.push(gnrss(q, ed));
@@ -157,6 +163,7 @@ function dedupeSortCap(raw){
 }
 
 async function main(){
+  // 1) Google News feeds
   const urls = FEEDS;
   const allFeeds = [];
   for (let i = 0; i < urls.length; i += CONCURRENCY){
@@ -165,25 +172,34 @@ async function main(){
     allFeeds.push(...feeds);
   }
   let raw = itemsFromFeeds(allFeeds).filter(i => withinDays(i.publishedAt, FRESH_DAYS));
+
+  // 2) Curated RSS feeds (add BEFORE dedupe/sort)
+  const customFeeds = await fetchCustomFeeds(CUSTOM_RSS);
+  raw.push(
+    ...itemsFromFeeds(customFeeds).filter(i => withinDays(i.publishedAt, FRESH_DAYS))
+  );
+
+  // 3) Dedupe/sort/cap ONCE over combined items
   const items = dedupeSortCap(raw);
 
+  // 4) Write outputs (JSON + debug)
   const payload = {
-  updatedAt: new Date().toISOString(),
-  items,
-  meta: { feedsTried: urls.length, kept: items.length }
-};
+    updatedAt: new Date().toISOString(),
+    items,
+    meta: { feedsTried: urls.length + CUSTOM_RSS.length, kept: items.length }
+  };
 
-await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
-await fs.writeFile(OUT_FILE, JSON.stringify(payload, null, 2), "utf8");
+  await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
+  await fs.writeFile(OUT_FILE, JSON.stringify(payload, null, 2), "utf8");
 
-await fs.writeFile("public/news.debug.txt",
-  `${new Date().toISOString()}
+  await fs.writeFile("public/news.debug.txt",
+    `${new Date().toISOString()}
 feeds tried: ${payload.meta.feedsTried}
 items kept: ${payload.meta.kept}
 `, "utf8");
 
-
   console.log(`Wrote ${items.length} items to ${OUT_FILE}`);
 }
+
 
 main().catch(err => { console.error(err); process.exit(1); });
