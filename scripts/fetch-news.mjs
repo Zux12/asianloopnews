@@ -62,6 +62,21 @@ const Q_WIDE = [
   '"metering system" oil OR gas'
 ];
 
+// Targeted vendor/industry sites (still via Google News, but scoped)
+const Q_SITES = [
+  'site:emerson.com flowmeter OR custody',
+  'site:endress.com flowmeter OR custody OR calibration',
+  'site:krohne.com flowmeter OR custody OR calibration',
+  'site:yokogawa.com flowmeter OR custody',
+  'site:abb.com flow measurement OR custody',
+  'site:honeywell.com flowmeter OR custody',
+  'site:siemens.com flowmeter OR custody',
+  'site:lngindustry.com metering OR flowmeter',
+  'site:worldoil.com metering OR flow',
+  'site:offshore-technology.com metering OR flowmeter'
+];
+
+
 // Emergency fallback (very broad, still filtered)
 const Q_FALLBACK = [
   'flowmeter',
@@ -81,7 +96,9 @@ function feedsOf(queries){
 
 const FEEDS_CORE     = feedsOf(Q_CORE);
 const FEEDS_WIDE     = feedsOf(Q_WIDE);
+const FEEDS_SITES    = feedsOf(Q_SITES);
 const FEEDS_FALLBACK = feedsOf(Q_FALLBACK);
+
 
 // Helpers
 function unwrapGoogle(href){
@@ -168,7 +185,8 @@ async function collectAll(){
   let debug = [];
 
   const allFeeds = [];
-  const urls1 = [...FEEDS_CORE, ...FEEDS_WIDE];
+const urls1 = [...FEEDS_CORE, ...FEEDS_WIDE, ...FEEDS_SITES];
+
   for (let i = 0; i < urls1.length; i += CONCURRENCY){
     const batch = urls1.slice(i, i + CONCURRENCY);
     const feeds = await parseBatch(batch);
