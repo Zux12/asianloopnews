@@ -11,7 +11,7 @@ const DEBUG_FILE   = "public/news.debug.txt"; // quick sanity log
 const FRESH_DAYS   = 45;     // keep last 45 days
 const MAX_ITEMS    = 30;     // output cap
 const CONCURRENCY  = 10;     // parallel RSS fetches
-const MIN_SCORE    = 0;      // <<< keep items with score >= 0 (safe mode)
+const MIN_SCORE    = -50;      // <<< keep items with score >= 0 (safe mode)
 
 // RSS parser with a real UA (avoids empty/blocked responses)
 const parser = new Parser({
