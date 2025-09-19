@@ -42,10 +42,11 @@ jobs:
   run: |
     git config user.name "github-actions[bot]"
     git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-    if [[ -n "$(git status --porcelain)" ]]; then
-      git add public/news.latest.json public/news.debug.txt
+    git add -A
+    if git diff --cached --quiet; then
+      echo "No changes to commit."
+    else
       git commit -m "Update news feed [skip ci]"
       git push
-    else
-      echo "No changes to commit."
     fi
+
