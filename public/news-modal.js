@@ -8,7 +8,8 @@
     localKey: 'al_news_snooze_until'
   };
 
-  let state = { items: [], fresh: false, openedManually: false };
+  let state = { items: [], fresh: false, openedManually: false, visibleCount: 6 }; // show top + 5 more initially
+
   let els = {};
 
   // Utilities
@@ -38,6 +39,21 @@ function hostFrom(href){
     return `${d}d ago`;
   };
 
+// Unwrap Google News redirect and display real host
+function normalizeLink(href){
+  try{
+    const u = new URL(href);
+    if (u.hostname.includes('news.google.com') && u.searchParams.has('url')) {
+      return u.searchParams.get('url');
+    }
+  }catch(_){}
+  return href;
+}
+function hostFrom(href){
+  try{ return new URL(href).hostname.replace(/^www\./,''); }catch(_){ return ''; }
+}
+
+  
   // Show the real site (not news.google.com) and unwrap Google News redirect links
 function normalizeLink(href){
   try{
@@ -63,18 +79,14 @@ function hostFrom(href){
 
     // header
     const hdr = ce('div', { className: 'al-news-header' });
-    const logo = ce('img', { className: 'al-news-logo', alt: 'Asianloop', src: (window.AlNewsConfig && window.AlNewsConfig.logo) || 'public/images/asianloop.jpg' });
-    
-    logo.addEventListener('error', ()=>{
-  // Fallback to a simple inline badge if the image 404s
+const logo = ce('img', { className: 'al-news-logo', alt: 'Asianloop', src: (window.AlNewsConfig && window.AlNewsConfig.logo) || 'public/images/asianloop.jpg' });
+// fallback if logo 404s
+logo.addEventListener('error', ()=>{
   logo.src = 'data:image/svg+xml;utf8,' +
-    encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
-      '<rect width="32" height="32" rx="8" fill="#0f62fe"/>' +
-      '<text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial" font-weight="700" font-size="14" fill="#fff">AL</text>' +
-    '</svg>');
+    encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#0f62fe"/><text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial" font-weight="700" font-size="14" fill="#fff">AL</text></svg>');
 });
+const title = ce('div', { className: 'al-news-title', id:'al-news-title', textContent: 'Latest Custody-Metering News' });
 
-    const title = ce('div', { className: 'al-news-title', id:'al-news-title', textContent: 'Latest Custody-Metering News' });
     const spacer = ce('div', { className: 'al-news-spacer' });
     const btnClose = ce('button', { className: 'al-news-close', 'aria-label':'Close news', innerHTML: '✕' });
     btnClose.addEventListener('click', close);
@@ -93,11 +105,17 @@ function hostFrom(href){
       else localStorage.removeItem(CFG.localKey);
     });
     const trailing = ce('div', { className:'trailing' });
-    const btnAll = ce('button', { className:'al-btn', textContent:'View all news' });
-    btnAll.addEventListener('click', ()=> window.open((window.AlNewsConfig && window.AlNewsConfig.viewAllUrl) || '#', '_blank'));
-    const btnClose2 = ce('button', { className:'al-btn', textContent:'Close' });
-    btnClose2.addEventListener('click', close);
-    trailing.append(btnAll, btnClose2);
+const btnMore = ce('button', { className:'al-btn', textContent:'Load more' });
+btnMore.addEventListener('click', ()=>{
+  state.visibleCount = Math.min(30, state.visibleCount + 6); // increase by 6, cap at 30
+  renderList(); // append more rows
+  if (state.visibleCount >= Math.min(30, state.items.length)) btnMore.disabled = true;
+});
+const btnClose2 = ce('button', { className:'al-btn', textContent:'Close' });
+trailing.append(btnMore, btnClose2);
+// keep a reference so we can disable it when all loaded
+els.btnMore = btnMore;
+
     ftr.append(label, trailing);
 
     els.modal.append(hdr, els.body, ftr);
@@ -115,7 +133,7 @@ function hostFrom(href){
     return;
   }
 
-  // Top story — unwrap google redirect, show true host
+  // Top story
   const top = items[0];
   const topHref = normalizeLink(top.url);
   const topHost = hostFrom(topHref) || (top.sourceName||'');
@@ -138,19 +156,29 @@ function hostFrom(href){
   topEl.append(meta, h3, sum, actions);
   els.body.append(topEl);
 
-  // Other headlines
-  const list = ce('div', { className:'al-news-list' });
-  items.slice(1, 5).forEach(it=>{
+  // List container + first batch
+  els.list = ce('div', { className:'al-news-list' });
+  els.body.append(els.list);
+  renderList();
+}
+
+  function renderList(){
+  if (!els.list) return;
+  const limit = Math.min(30, state.visibleCount, state.items.length);
+  els.list.innerHTML = '';
+  // slice from 1 because 0 is top story
+  state.items.slice(1, limit).forEach(it=>{
     const href = normalizeLink(it.url);
     const host = hostFrom(href) || (it.sourceName||'');
     const row = ce('div', { className:'al-news-item' });
     const a = ce('a', { href, target:'_blank', rel:'noopener' });
     a.textContent = `• ${it.title} · ${fmtRel(it.publishedAt)} · ${host}`;
     row.append(a);
-    list.append(row);
+    els.list.append(row);
   });
-  els.body.append(list);
+  if (els.btnMore) els.btnMore.disabled = (limit >= Math.min(30, state.items.length));
 }
+
 
 
 
@@ -178,8 +206,10 @@ function hostFrom(href){
       const json = await res.json();
       const items = (json.items||[]).slice(0,5);
       state.items = items;
-      state.fresh = items.some(it=> isFresh(it.publishedAt));
-      render(items);
+state.fresh = items.some(it=> isFresh(it.publishedAt));
+state.visibleCount = Math.max(6, state.visibleCount); // preserve user-expanded state
+render(items);
+
     }catch(e){
       state.items = [];
       state.fresh = false;
