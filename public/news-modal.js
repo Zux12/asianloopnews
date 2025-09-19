@@ -270,9 +270,10 @@
 
 function shouldAutoShow(){
   const snoozeUntil = localStorage.getItem(CFG.localKey);
-  if (snoozeUntil && new Date(snoozeUntil).getTime() > now()) return false;
-  return true; // always show after 5s unless user snoozed it
+  if (snoozeUntil && new Date(snoozeUntil).getTime() > Date.now()) return false;
+  return true; // always show after 5s
 }
+
 
 
   // ------- Boot -------
