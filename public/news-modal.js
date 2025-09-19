@@ -38,6 +38,21 @@ function hostFrom(href){
     return `${d}d ago`;
   };
 
+  // Show the real site (not news.google.com) and unwrap Google News redirect links
+function normalizeLink(href){
+  try{
+    const u = new URL(href);
+    if (u.hostname.includes('news.google.com') && u.searchParams.has('url')) {
+      return u.searchParams.get('url');
+    }
+  }catch(_){}
+  return href;
+}
+function hostFrom(href){
+  try{ return new URL(href).hostname.replace(/^www\./,''); }catch(_){ return ''; }
+}
+
+
   
 
   // Build DOM
@@ -49,6 +64,7 @@ function hostFrom(href){
     // header
     const hdr = ce('div', { className: 'al-news-header' });
     const logo = ce('img', { className: 'al-news-logo', alt: 'Asianloop', src: (window.AlNewsConfig && window.AlNewsConfig.logo) || 'public/images/asianloop.jpg' });
+    
     logo.addEventListener('error', ()=>{
   // Fallback to a simple inline badge if the image 404s
   logo.src = 'data:image/svg+xml;utf8,' +
@@ -99,7 +115,7 @@ function hostFrom(href){
     return;
   }
 
-  // Normalize URL for top story (unwrap google redirect) and show true host
+  // Top story — unwrap google redirect, show true host
   const top = items[0];
   const topHref = normalizeLink(top.url);
   const topHost = hostFrom(topHref) || (top.sourceName||'');
@@ -122,7 +138,7 @@ function hostFrom(href){
   topEl.append(meta, h3, sum, actions);
   els.body.append(topEl);
 
-  // List items
+  // Other headlines
   const list = ce('div', { className:'al-news-list' });
   items.slice(1, 5).forEach(it=>{
     const href = normalizeLink(it.url);
@@ -135,6 +151,7 @@ function hostFrom(href){
   });
   els.body.append(list);
 }
+
 
 
   function open(manual=false){
