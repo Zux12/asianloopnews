@@ -5,12 +5,13 @@ import fs from "fs/promises";
 import path from "path";
 import Parser from "rss-parser";
 
-const OUT_FILE   = "public/news.latest.json";
-const FRESH_DAYS = 30;     // keep last 30 days in JSON
-const MAX_ITEMS  = 30;     // cap output
-const CONCURRENCY = 8;     // parallel RSS fetches
+const OUT_FILE    = "public/news.latest.json";
+const FRESH_DAYS  = 45;     // keep last 45 days in JSON
+const MAX_ITEMS   = 30;     // cap output
+const CONCURRENCY = 10;     // parallel RSS fetches
+const MIN_SCORE   = 1;      // <<< keep items with score >= 1 (raise to 3 for stricter)
 
-// RSS parser with a real UA (avoids silent empty/blocked responses)
+// RSS parser with a real UA (avoids empty/blocked responses)
 const parser = new Parser({
   timeout: 15000,
   maxRedirects: 5,
@@ -22,18 +23,18 @@ const parser = new Parser({
   }
 });
 
-// English editions to sweep (broad but readable)
+// English editions to sweep
 const EDITIONS = [
   { hl: "en-US", gl: "US", ceid: "US:en" },
   { hl: "en-GB", gl: "GB", ceid: "GB:en" },
   { hl: "en-SG", gl: "SG", ceid: "SG:en" },
   { hl: "en-MY", gl: "MY", ceid: "MY:en" },
-  { hl: "en-AE", gl: "AE", ceid: "AE:en" }
+  { hl: "en-AE", gl: "AE", ceid: "AE:en" },
+  { hl: "en-IN", gl: "IN", ceid: "IN:en" }
 ];
 
-// Focus: custody transfer + metering + flowmeters + calibration labs
-// Primary terms (more likely to be on-topic for oil/gas custody/fiscal)
-const QUERIES_PRIMARY = [
+// Focused queries (custody/fiscal/metering)
+const Q_CORE = [
   '"custody transfer" meter',
   '"custody transfer" flow',
   '"fiscal metering"',
@@ -43,31 +44,40 @@ const QUERIES_PRIMARY = [
   '"OIML R-117"',
   '"ISO 17025" metering',
   '"metering skid" OR "metering station" custody',
-  '"LNG metering" OR "gas fiscal metering"'
+  '"LNG fiscal metering" OR "gas fiscal metering"'
 ];
 
-// Secondary terms (wider metering/flow/calibration domain)
-const QUERIES_SECONDARY = [
+// Wider domain queries (flowmeters / calibration labs)
+const Q_WIDE = [
   '"ultrasonic flowmeter" OR "ultrasonic meter"',
   '"coriolis flowmeter" OR "coriolis meter"',
   '"turbine meter" OR "orifice plate" metering',
-  '"calibration lab" metering OR flow',
   '"flowmeter calibration" OR "flow calibration"',
-  '"metrology" flow OR metering'
+  '"calibration lab" metering OR flow',
+  '"metrology" flow OR metering',
+  '"flow computer" OR "gas chromatograph" metering'
+];
+
+// Very broad fallback (only used if we still have too few items)
+const Q_FALLBACK = [
+  'flowmeter',
+  '"metering system" oil OR gas',
+  '"metering skid"',
+  '"flow calibration"'
 ];
 
 const gnrss = (q, ed) =>
   `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${ed.hl}&gl=${ed.gl}&ceid=${ed.ceid}`;
 
-function buildFeeds(){
+function buildFeeds(queries){
   const feeds = [];
-  for (const ed of EDITIONS){
-    for (const q of QUERIES_PRIMARY)   feeds.push(gnrss(q, ed));
-    for (const q of QUERIES_SECONDARY) feeds.push(gnrss(q, ed));
-  }
+  for (const ed of EDITIONS) for (const q of queries) feeds.push(gnrss(q, ed));
   return feeds;
 }
-const FEEDS = buildFeeds();
+
+const FEEDS_CORE = buildFeeds(Q_CORE);
+const FEEDS_WIDE = buildFeeds(Q_WIDE);
+const FEEDS_FALLBACK = buildFeeds(Q_FALLBACK);
 
 // Helpers
 function unwrapGoogle(href){
@@ -82,76 +92,95 @@ function unwrapGoogle(href){
 function hostOf(url){ try{ return new URL(url).hostname.replace(/^www\./,''); }catch{ return ''; } }
 const norm = s => (s||'').trim().toLowerCase().replace(/\s+/g,' ').slice(0,180);
 
-// Relevance model (scores instead of a hard filter)
-const RX_MEAS = /\bflow ?meter\b|\bflowmeter\b|\bmeter(?:ing|s)?\b|\bprover\b|meter proving|pipe prover|\blact\b|lease automatic custody transfer|\bmetering (?:skid|station)\b|ultrasonic (?:flow|meter|measurement)|coriolis (?:flow|meter|measurement)|turbine meter|orifice (?:plate|meter)|flow computer|gas chromatograph|calibration lab|metrology/;
-const RX_CTX_STRONG = /\bcustody transfer\b|\bfiscal\b|\bmpms\b|oiml|r-?117|\biso\s*17025\b/;
-const RX_CTX_WEAK   = /\blng\b|\boil\b|\bgas\b|\bterminal\b|\bpipeline\b|\bproving\b|\bcalibration\b|\btraceability\b|\buncertainty\b/;
-const RX_BAD        = /\b(etf|crypto|bitcoin|token|securit(?:y|ies)|custody bank|asset management|child custody|police custody|detention|crime)\b/;
-
-function scoreText(title, summary){
-  const t = ((title||'') + ' ' + (summary||'')).toLowerCase();
-
-  if (!RX_MEAS.test(t)) return -999;      // not metering/flow/calibration → drop
-  if (RX_BAD.test(t))  return -9999;      // finance/legal “custody” → drop
-
-  let s = 0;
-  if (RX_CTX_STRONG.test(t)) s += 6;      // MPMS/OIML/ISO17025/custody/fiscal
-  if (RX_CTX_WEAK.test(t))   s += 3;      // LNG/oil/gas/pipeline/proving/calibration
-  if (/custody transfer/.test(t)) s += 3; // double weight if explicit
-  if (/meter proving|pipe prover|lact/.test(t)) s += 2;
-  if (/ultrasonic|coriolis|turbine|orifice|flow computer|gas chromatograph/.test(t)) s += 1;
-  return s;
-}
-
 function withinDays(iso, days){
   const t = new Date(iso).getTime();
   return t >= (Date.now() - days*864e5);
 }
 
-// Parallel feed fetcher (batched)
-async function collect(){
-  const urls = FEEDS.slice();
+function guessCategory(title){
+  const t = (title||'').toLowerCase();
+  if (/\bmpms\b|\boiml\b|r-117|\biso\s*17025\b/.test(t)) return 'Standards';
+  if (/\bprover\b|\blact\b|\bultrasonic\b|\bcoriolis\b|\bturbine\b|\borifice\b|\bflowmeter\b|\bflow computer\b|\bgas chromatograph\b/.test(t)) return 'Technology';
+  if (/\bcontract\b|\bawarded\b|\bterminal\b|\bproject\b|\btender\b/.test(t)) return 'Projects';
+  if (/\bcalibration\b|\bmetrology\b|\blab\b|\btraceabilit(y|ies)\b/.test(t)) return 'Research';
+  return 'Update';
+}
+
+// Relevance scoring (soft filter)
+// Keep if it mentions measurement domain; boost for custody/fiscal/standards; penalize finance/legal "custody".
+const RX_MEAS = /\bflow ?meter\b|\bflowmeter\b|\bmeter(?:ing|s)?\b|\bprover\b|meter proving|pipe prover|\blact\b|lease automatic custody transfer|\bmetering (?:skid|station)\b|ultrasonic (?:flow|meter|measurement)|coriolis (?:flow|meter|measurement)|turbine meter|orifice (?:plate|meter)|flow computer|gas chromatograph|calibration lab|metrology/;
+const RX_CTX_STRONG = /\bcustody transfer\b|\bfiscal\b|\bmpms\b|oiml|r-?117|\biso\s*17025\b/;
+const RX_CTX_WEAK   = /\blng\b|\boil\b|\bgas\b|\bterminal\b|\bpipeline\b|\bproving\b|\bcalibration\b|\btraceabilit(y|ies)\b|\buncertainty\b/;
+const RX_BAD        = /\b(etf|crypto|bitcoin|token|securit(?:y|ies)|custody bank|asset management|child custody|police custody|detention|crime)\b/;
+
+function scoreText(title, summary){
+  const t = ((title||'') + ' ' + (summary||'')).toLowerCase();
+
+  if (!RX_MEAS.test(t)) return -999;   // not in our domain
+  if (RX_BAD.test(t))  return -9999;   // finance/legal "custody" etc.
+
+  let s = 1;                           // base for being in domain
+  if (RX_CTX_STRONG.test(t)) s += 6;
+  if (RX_CTX_WEAK.test(t))   s += 3;
+  if (/custody transfer/.test(t)) s += 2;
+  if (/meter proving|pipe prover|lact/.test(t)) s += 2;
+  if (/ultrasonic|coriolis|turbine|orifice|flow computer|gas chromatograph/.test(t)) s += 1;
+
+  return s;
+}
+
+// Parse a batch of RSS URLs in parallel
+async function parseBatch(urls){
+  const results = await Promise.all(
+    urls.map(u => parser.parseURL(u).catch(() => null))
+  );
+  return results.filter(Boolean);
+}
+
+function itemsFromFeeds(feeds){
   const out = [];
+  for (const f of feeds){
+    for (const it of (f.items||[])){
+      const title = it.title || '';
+      const link  = unwrapGoogle(it.link || '');
+      const sum   = (it.contentSnippet || it.content || '').replace(/\s+/g,' ').trim();
+      const score = scoreText(title, sum);
+      if (score < MIN_SCORE) continue;
 
-  const toItem = (feed, it) => {
-    const title = it.title || '';
-    const link  = unwrapGoogle(it.link || '');
-    const sum   = (it.contentSnippet || it.content || '').replace(/\s+/g,' ').trim();
-    const score = scoreText(title, sum);
-    if (score < 0) return null;
-
-    return {
-      title,
-      url: link,
-      sourceName: hostOf(link) || (feed.title ?? 'News'),
-      publishedAt: it.isoDate || it.pubDate || new Date().toISOString(),
-      summary: sum.slice(0,240),
-      category: guessCategory(title),
-      _score: score
-    };
-  };
-
-  for (let i = 0; i < urls.length; i += CONCURRENCY){
-    const batch = urls.slice(i, i + CONCURRENCY);
-    const feeds = await Promise.all(batch.map(u => parser.parseURL(u).catch(() => null)));
-    for (const f of feeds){
-      if (!f || !f.items) continue;
-      for (const it of f.items){
-        const item = toItem(f, it);
-        if (item) out.push(item);
-      }
+      out.push({
+        title,
+        url: link,
+        sourceName: hostOf(link) || (f.title ?? 'News'),
+        publishedAt: it.isoDate || it.pubDate || new Date().toISOString(),
+        summary: sum.slice(0,240),
+        category: guessCategory(title),
+        _score: score
+      });
     }
   }
   return out;
 }
 
-function guessCategory(title){
-  const t = (title||'').toLowerCase();
-  if (/\bmpms\b|\boiml\b|r-117|\biso\s*17025\b/.test(t)) return 'Standards';
-  if (/\bprover\b|\blact\b|\bultrasonic\b|\bcoriolis\b|\bturbine\b|\borifice\b|\bflowmeter\b/.test(t)) return 'Technology';
-  if (/\bcontract\b|\bawarded\b|\bterminal\b|\bproject\b|\btender\b/.test(t)) return 'Projects';
-  if (/\bcalibration\b|\bmetrology\b|\blab\b/.test(t)) return 'Research';
-  return 'Update';
+async function collectAll(){
+  const urls = [...FEEDS_CORE, ...FEEDS_WIDE];
+  const allFeeds = [];
+  for (let i = 0; i < urls.length; i += CONCURRENCY){
+    const batch = urls.slice(i, i + CONCURRENCY);
+    const feeds = await parseBatch(batch);
+    allFeeds.push(...feeds);
+  }
+  let items = itemsFromFeeds(allFeeds).filter(i => withinDays(i.publishedAt, FRESH_DAYS));
+
+  // Fallback sweep if still too few items
+  if (items.length < 10){
+    const fb = [];
+    for (let i = 0; i < FEEDS_FALLBACK.length; i += CONCURRENCY){
+      const feeds = await parseBatch(FEEDS_FALLBACK.slice(i, i + CONCURRENCY));
+      fb.push(...feeds);
+    }
+    items.push(...itemsFromFeeds(fb).filter(i => withinDays(i.publishedAt, FRESH_DAYS)));
+  }
+  return items;
 }
 
 function dedupeSortCap(raw){
@@ -160,7 +189,7 @@ function dedupeSortCap(raw){
   for (const it of raw){
     if (!it.title || !it.url) continue;
     let key = norm(it.title);
-    try { key += '|' + new URL(it.url).pathname; } catch {}
+    try { key += "|" + new URL(it.url).pathname; } catch {}
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(it);
@@ -170,9 +199,8 @@ function dedupeSortCap(raw){
 }
 
 async function main(){
-  const raw = await collect();
-  const filtered = raw.filter(i => withinDays(i.publishedAt, FRESH_DAYS));
-  const items = dedupeSortCap(filtered);
+  const raw = await collectAll();
+  const items = dedupeSortCap(raw);
 
   const payload = { updatedAt: new Date().toISOString(), items };
   await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
