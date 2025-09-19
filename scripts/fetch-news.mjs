@@ -112,7 +112,9 @@ function guessCategory(title){
 // Ultra-safe relevance:
 //  • keep if it mentions metering/flow/calibration terms
 //  • drop obvious finance/legal "custody" noise
-const RX_KEEP = /\bflow ?meter\b|\bflowmeter\b|\bmeter(?:ing|s)?\b|\bprover\b|meter proving|pipe prover|\blact\b|lease automatic custody transfer|\bmetering (?:skid|station)\b|ultrasonic (?:flow|meter|measurement)|coriolis (?:flow|meter|measurement)|turbine meter|orifice (?:plate|meter)|flow computer|gas chromatograph|calibration lab|flow calibration|metrology/;
+// In the Ultra-Safe version, replace the relevance check:
+const RX_KEEP = /\b(flow ?meter|flowmeter|meter(?:ing|s)?|prover|meter proving|pipe prover|lact|lease automatic custody transfer|metering (?:skid|station)|ultrasonic|coriolis|turbine meter|orifice (?:plate|meter)|flow computer|gas chromatograph|calibration|metrology)\b/;
+// keep anything that hits RX_KEEP
 const RX_DROP = /\b(etf|crypto|bitcoin|token|securit(?:y|ies)|custody bank|asset management|child custody|police custody|detention|crime)\b/;
 
 function isRelevant(title, summary){
