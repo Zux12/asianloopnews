@@ -23,19 +23,20 @@ const OUT_FILE = "public/news.latest.json";
 
 // Focused Google News queries (RSS). You can add/remove later.
 const QUERIES = [
-  'custody transfer',
-  'custody metering',
-  'fiscal metering',
-  'meter proving OR "pipe prover"',
-  '"LACT unit" custody',
-  '"API MPMS" 21.1',
-  '"API MPMS" 5.6',
+  '"custody transfer" meter',
+  '"custody transfer" flow',
+  '"fiscal metering"',
+  '"meter proving" OR "pipe prover"',
+  '"LACT unit" OR "lease automatic custody transfer"',
+  '"API MPMS"',
   '"OIML R-117"',
-  '"ISO 17025" calibration',
-  'ultrasonic custody meter OR custody ultrasonic',
-  'coriolis custody transfer',
-  'LNG metering OR LNG custody'
+  '"ISO 17025" metering',
+  '"ultrasonic meter" custody',
+  '"coriolis meter" custody',
+  '"metering skid" OR "metering station" custody',
+  '"LNG metering" OR "gas metering" OR "oil metering" custody'
 ];
+
 
 
 // Build Google News RSS URL
