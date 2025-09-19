@@ -227,14 +227,24 @@ async function main(){
   const { items: raw, debug } = await collectAll();
   const items = dedupeSortCap(raw);
 
-  const payload = { updatedAt: new Date().toISOString(), items };
-  await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
-  await fs.writeFile(OUT_FILE, JSON.stringify(payload, null, 2), "utf8");
+const payload = { 
+  updatedAt: new Date().toISOString(), 
+  items,
+  meta: { feedsTried: (FEEDS_CORE.length + FEEDS_WIDE.length + FEEDS_FALLBACK.length), kept: items.length }
+};
 
-  // Write a tiny debug note so you can see if we had content but then filtered to 0
-  await fs.writeFile(DEBUG_FILE, `${new Date().toISOString()}\n${debug.join("\n")}\nFinal items: ${items.length}\n`, "utf8");
+await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
+await fs.writeFile(OUT_FILE, JSON.stringify(payload, null, 2), "utf8");
 
-  console.log(`Wrote ${items.length} items to ${OUT_FILE}`);
+// also write a tiny text debug note
+await fs.writeFile("public/news.debug.txt",
+  `${new Date().toISOString()}
+feeds tried: ${payload.meta.feedsTried}
+items kept: ${payload.meta.kept}
+`, "utf8");
+
+console.log(`Wrote ${items.length} items to ${OUT_FILE}`);
+
 }
 
 main().catch(err => { console.error(err); process.exit(1); });
