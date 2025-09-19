@@ -1,15 +1,17 @@
 // scripts/fetch-news.mjs
-// Global metering / custody-transfer / flowmeter / calibration-lab news via Google News RSS (no API keys)
+// SAFE-MODE: Global metering / custody-transfer / flowmeter / calibration-lab news
+// via Google News RSS only (no API keys). Looser scoring + fallback so it never ends empty.
 
 import fs from "fs/promises";
 import path from "path";
 import Parser from "rss-parser";
 
-const OUT_FILE    = "public/news.latest.json";
-const FRESH_DAYS  = 45;     // keep last 45 days in JSON
-const MAX_ITEMS   = 30;     // cap output
-const CONCURRENCY = 10;     // parallel RSS fetches
-const MIN_SCORE   = 1;      // <<< keep items with score >= 1 (raise to 3 for stricter)
+const OUT_FILE     = "public/news.latest.json";
+const DEBUG_FILE   = "public/news.debug.txt"; // quick sanity log
+const FRESH_DAYS   = 45;     // keep last 45 days
+const MAX_ITEMS    = 30;     // output cap
+const CONCURRENCY  = 10;     // parallel RSS fetches
+const MIN_SCORE    = 0;      // <<< keep items with score >= 0 (safe mode)
 
 // RSS parser with a real UA (avoids empty/blocked responses)
 const parser = new Parser({
@@ -23,7 +25,7 @@ const parser = new Parser({
   }
 });
 
-// English editions to sweep
+// English editions to sweep (broad coverage)
 const EDITIONS = [
   { hl: "en-US", gl: "US", ceid: "US:en" },
   { hl: "en-GB", gl: "GB", ceid: "GB:en" },
@@ -33,7 +35,7 @@ const EDITIONS = [
   { hl: "en-IN", gl: "IN", ceid: "IN:en" }
 ];
 
-// Focused queries (custody/fiscal/metering)
+// Core custody/fiscal/metering queries
 const Q_CORE = [
   '"custody transfer" meter',
   '"custody transfer" flow',
@@ -47,7 +49,7 @@ const Q_CORE = [
   '"LNG fiscal metering" OR "gas fiscal metering"'
 ];
 
-// Wider domain queries (flowmeters / calibration labs)
+// Wider metering/flow/calibration domain
 const Q_WIDE = [
   '"ultrasonic flowmeter" OR "ultrasonic meter"',
   '"coriolis flowmeter" OR "coriolis meter"',
@@ -55,29 +57,31 @@ const Q_WIDE = [
   '"flowmeter calibration" OR "flow calibration"',
   '"calibration lab" metering OR flow',
   '"metrology" flow OR metering',
-  '"flow computer" OR "gas chromatograph" metering'
+  '"flow computer" OR "gas chromatograph" metering',
+  '"flow meter" oil OR gas',
+  '"metering system" oil OR gas'
 ];
 
-// Very broad fallback (only used if we still have too few items)
+// Emergency fallback (very broad, still filtered)
 const Q_FALLBACK = [
   'flowmeter',
-  '"metering system" oil OR gas',
   '"metering skid"',
-  '"flow calibration"'
+  '"flow calibration"',
+  '"flow measurement" oil OR gas'
 ];
 
 const gnrss = (q, ed) =>
   `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${ed.hl}&gl=${ed.gl}&ceid=${ed.ceid}`;
 
-function buildFeeds(queries){
-  const feeds = [];
-  for (const ed of EDITIONS) for (const q of queries) feeds.push(gnrss(q, ed));
-  return feeds;
+function feedsOf(queries){
+  const out = [];
+  for (const ed of EDITIONS) for (const q of queries) out.push(gnrss(q, ed));
+  return out;
 }
 
-const FEEDS_CORE = buildFeeds(Q_CORE);
-const FEEDS_WIDE = buildFeeds(Q_WIDE);
-const FEEDS_FALLBACK = buildFeeds(Q_FALLBACK);
+const FEEDS_CORE     = feedsOf(Q_CORE);
+const FEEDS_WIDE     = feedsOf(Q_WIDE);
+const FEEDS_FALLBACK = feedsOf(Q_FALLBACK);
 
 // Helpers
 function unwrapGoogle(href){
@@ -91,11 +95,7 @@ function unwrapGoogle(href){
 }
 function hostOf(url){ try{ return new URL(url).hostname.replace(/^www\./,''); }catch{ return ''; } }
 const norm = s => (s||'').trim().toLowerCase().replace(/\s+/g,' ').slice(0,180);
-
-function withinDays(iso, days){
-  const t = new Date(iso).getTime();
-  return t >= (Date.now() - days*864e5);
-}
+function withinDays(iso, days){ return new Date(iso).getTime() >= (Date.now() - days*864e5); }
 
 function guessCategory(title){
   const t = (title||'').toLowerCase();
@@ -106,20 +106,24 @@ function guessCategory(title){
   return 'Update';
 }
 
-// Relevance scoring (soft filter)
-// Keep if it mentions measurement domain; boost for custody/fiscal/standards; penalize finance/legal "custody".
-const RX_MEAS = /\bflow ?meter\b|\bflowmeter\b|\bmeter(?:ing|s)?\b|\bprover\b|meter proving|pipe prover|\blact\b|lease automatic custody transfer|\bmetering (?:skid|station)\b|ultrasonic (?:flow|meter|measurement)|coriolis (?:flow|meter|measurement)|turbine meter|orifice (?:plate|meter)|flow computer|gas chromatograph|calibration lab|metrology/;
+// Relevance scoring (SOFT) — keep domain, exclude noise
+const RX_MEAS  = /\bflow ?meter\b|\bflowmeter\b|\bmeter(?:ing|s)?\b|\bprover\b|meter proving|pipe prover|\blact\b|lease automatic custody transfer|\bmetering (?:skid|station)\b|ultrasonic (?:flow|meter|measurement)|coriolis (?:flow|meter|measurement)|turbine meter|orifice (?:plate|meter)|flow computer|gas chromatograph|calibration lab|metrology/;
+// Avoid utility/electric/water-only consumer meters (not our domain)
+const RX_BAD_UTILITY = /\b(electric|electricity|power|smart|water)\s+meter(s)?\b/;
+// Context boosts help ranking but are NOT strictly required in safe-mode
 const RX_CTX_STRONG = /\bcustody transfer\b|\bfiscal\b|\bmpms\b|oiml|r-?117|\biso\s*17025\b/;
 const RX_CTX_WEAK   = /\blng\b|\boil\b|\bgas\b|\bterminal\b|\bpipeline\b|\bproving\b|\bcalibration\b|\btraceabilit(y|ies)\b|\buncertainty\b/;
+// Exclude finance/legal “custody”
 const RX_BAD        = /\b(etf|crypto|bitcoin|token|securit(?:y|ies)|custody bank|asset management|child custody|police custody|detention|crime)\b/;
 
 function scoreText(title, summary){
   const t = ((title||'') + ' ' + (summary||'')).toLowerCase();
 
-  if (!RX_MEAS.test(t)) return -999;   // not in our domain
-  if (RX_BAD.test(t))  return -9999;   // finance/legal "custody" etc.
+  if (!RX_MEAS.test(t))         return -999;   // out of domain
+  if (RX_BAD.test(t))           return -9999;  // finance/legal custody
+  if (RX_BAD_UTILITY.test(t))   return -50;    // de-rank utility meters
 
-  let s = 1;                           // base for being in domain
+  let s = 0;
   if (RX_CTX_STRONG.test(t)) s += 6;
   if (RX_CTX_WEAK.test(t))   s += 3;
   if (/custody transfer/.test(t)) s += 2;
@@ -131,12 +135,11 @@ function scoreText(title, summary){
 
 // Parse a batch of RSS URLs in parallel
 async function parseBatch(urls){
-  const results = await Promise.all(
-    urls.map(u => parser.parseURL(u).catch(() => null))
-  );
+  const results = await Promise.all(urls.map(u => parser.parseURL(u).catch(() => null)));
   return results.filter(Boolean);
 }
 
+// Convert feeds -> items with scoring
 function itemsFromFeeds(feeds){
   const out = [];
   for (const f of feeds){
@@ -162,49 +165,57 @@ function itemsFromFeeds(feeds){
 }
 
 async function collectAll(){
-  const urls = [...FEEDS_CORE, ...FEEDS_WIDE];
+  let debug = [];
+
   const allFeeds = [];
-  for (let i = 0; i < urls.length; i += CONCURRENCY){
-    const batch = urls.slice(i, i + CONCURRENCY);
+  const urls1 = [...FEEDS_CORE, ...FEEDS_WIDE];
+  for (let i = 0; i < urls1.length; i += CONCURRENCY){
+    const batch = urls1.slice(i, i + CONCURRENCY);
     const feeds = await parseBatch(batch);
     allFeeds.push(...feeds);
   }
   let items = itemsFromFeeds(allFeeds).filter(i => withinDays(i.publishedAt, FRESH_DAYS));
+  debug.push(`Core+Wide feeds: ${allFeeds.length}, items kept: ${items.length}`);
 
-  // Fallback sweep if still too few items
+  // Fallback sweep if still light
   if (items.length < 10){
-    const fb = [];
+    const allFb = [];
     for (let i = 0; i < FEEDS_FALLBACK.length; i += CONCURRENCY){
       const feeds = await parseBatch(FEEDS_FALLBACK.slice(i, i + CONCURRENCY));
-      fb.push(...feeds);
+      allFb.push(...feeds);
     }
-    items.push(...itemsFromFeeds(fb).filter(i => withinDays(i.publishedAt, FRESH_DAYS)));
+    const fbItems = itemsFromFeeds(allFb).filter(i => withinDays(i.publishedAt, FRESH_DAYS));
+    debug.push(`Fallback feeds: ${allFb.length}, items kept: ${fbItems.length}`);
+    items.push(...fbItems);
   }
-  return items;
+
+  return { items, debug };
 }
 
 function dedupeSortCap(raw){
-  const seen = new Set();
-  const out = [];
+  const seen = new Set(), out = [];
   for (const it of raw){
     if (!it.title || !it.url) continue;
     let key = norm(it.title);
     try { key += "|" + new URL(it.url).pathname; } catch {}
     if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(it);
+    seen.add(key); out.push(it);
   }
   out.sort((a,b) => (b._score - a._score) || (new Date(b.publishedAt) - new Date(a.publishedAt)));
   return out.slice(0, MAX_ITEMS).map(({_score, ...rest}) => rest);
 }
 
 async function main(){
-  const raw = await collectAll();
+  const { items: raw, debug } = await collectAll();
   const items = dedupeSortCap(raw);
 
   const payload = { updatedAt: new Date().toISOString(), items };
   await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
   await fs.writeFile(OUT_FILE, JSON.stringify(payload, null, 2), "utf8");
+
+  // Write a tiny debug note so you can see if we had content but then filtered to 0
+  await fs.writeFile(DEBUG_FILE, `${new Date().toISOString()}\n${debug.join("\n")}\nFinal items: ${items.length}\n`, "utf8");
+
   console.log(`Wrote ${items.length} items to ${OUT_FILE}`);
 }
 
