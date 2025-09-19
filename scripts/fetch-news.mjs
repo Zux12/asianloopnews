@@ -186,19 +186,19 @@ async function main(){
 
   // 4) Write outputs (JSON + debug)
   const payload = {
-    updatedAt: new Date().toISOString(),
-    items,
-    meta: { feedsTried: urls.length + CUSTOM_RSS.length, kept: items.length }
-  };
+  updatedAt: new Date().toISOString(),
+  items,
+  meta: { feedsTried: urls.length + CUSTOM_RSS.length, kept: items.length }
+};
 
-  await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
-  await fs.writeFile(OUT_FILE, JSON.stringify(payload, null, 2), "utf8");
-
-  await fs.writeFile("public/news.debug.txt",
-    `${new Date().toISOString()}
+await fs.mkdir(path.dirname(OUT_FILE), { recursive: true });
+await fs.writeFile(OUT_FILE, JSON.stringify(payload, null, 2), "utf8");
+await fs.writeFile("public/news.debug.txt",
+  `${new Date().toISOString()}
 feeds tried: ${payload.meta.feedsTried}
 items kept: ${payload.meta.kept}
 `, "utf8");
+
 
   console.log(`Wrote ${items.length} items to ${OUT_FILE}`);
 }
