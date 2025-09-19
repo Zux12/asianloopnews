@@ -18,11 +18,27 @@
   const addDays = (d)=> new Date(now() + d*24*60*60*1000);
   const isFresh = (iso)=> (now() - new Date(iso).getTime()) <= CFG.freshHours*3600*1000;
   const fmtRel = (iso)=>{
+    // Show the real site (not news.google.com) and unwrap Google News redirect links
+function normalizeLink(href){
+  try{
+    const u = new URL(href);
+    if (u.hostname.includes('news.google.com') && u.searchParams.has('url')) {
+      return u.searchParams.get('url');
+    }
+  }catch(_){}
+  return href;
+}
+function hostFrom(href){
+  try{ return new URL(href).hostname.replace(/^www\./,''); }catch(_){ return ''; }
+}
+
     const ms = now()-new Date(iso).getTime();
     const h = Math.floor(ms/3600000), d = Math.floor(h/24);
     if (h < 24) return `${h}h ago`;
     return `${d}d ago`;
   };
+
+  
 
   // Build DOM
   function buildModal(){
@@ -33,6 +49,15 @@
     // header
     const hdr = ce('div', { className: 'al-news-header' });
     const logo = ce('img', { className: 'al-news-logo', alt: 'Asianloop', src: (window.AlNewsConfig && window.AlNewsConfig.logo) || 'public/images/asianloop.jpg' });
+    logo.addEventListener('error', ()=>{
+  // Fallback to a simple inline badge if the image 404s
+  logo.src = 'data:image/svg+xml;utf8,' +
+    encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
+      '<rect width="32" height="32" rx="8" fill="#0f62fe"/>' +
+      '<text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial" font-weight="700" font-size="14" fill="#fff">AL</text>' +
+    '</svg>');
+});
+
     const title = ce('div', { className: 'al-news-title', id:'al-news-title', textContent: 'Latest Custody-Metering News' });
     const spacer = ce('div', { className: 'al-news-spacer' });
     const btnClose = ce('button', { className: 'al-news-close', 'aria-label':'Close news', innerHTML: '✕' });
@@ -67,44 +92,50 @@
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') close(); });
   }
 
-  function render(items){
-    els.body.innerHTML = '';
-    if (!items || !items.length){
-      els.body.append(ce('div', { className:'al-news-meta', textContent:'No new items in the last 3 days.' }));
-      return;
-    }
-    // Top story
-    const top = items[0];
-    const topEl = ce('div', { className:'al-news-top' });
-    const meta = ce('div', { className:'al-news-meta', textContent:`${top.category||'Update'} · ${fmtRel(top.publishedAt)} · ${top.sourceName||''}` });
-    const h3 = ce('h3');
-    const aTop = ce('a', { href: top.url, target:'_blank', rel:'noopener', textContent: top.title });
-    h3.append(aTop);
-    const sum = ce('div', { className:'al-news-meta', textContent: top.summary || '' });
-    const actions = ce('div', { className:'al-news-actions' });
-    const read = ce('button', { className:'al-btn primary', textContent:'Read full' });
-    read.addEventListener('click', ()=> window.open(top.url, '_blank'));
-    const share = ce('button', { className:'al-btn', textContent:'Share' });
-    share.addEventListener('click', ()=>{
-      const u = new URL(top.url);
-      const msg = encodeURIComponent(`${top.title} — ${u.hostname}\n${top.url}`);
-      window.open(`https://wa.me/?text=${msg}`, '_blank');
-    });
-    actions.append(read, share);
-    topEl.append(meta, h3, sum, actions);
-    els.body.append(topEl);
-
-    // List
-    const list = ce('div', { className:'al-news-list' });
-    items.slice(1, 5).forEach(it=>{
-      const row = ce('div', { className:'al-news-item' });
-      const a = ce('a', { href: it.url, target:'_blank', rel:'noopener' });
-      a.textContent = `• ${it.title} · ${fmtRel(it.publishedAt)} · ${it.sourceName||''}`;
-      row.append(a);
-      list.append(row);
-    });
-    els.body.append(list);
+ function render(items){
+  els.body.innerHTML = '';
+  if (!items || !items.length){
+    els.body.append(ce('div', { className:'al-news-meta', textContent:'No new items in the last 3 days.' }));
+    return;
   }
+
+  // Normalize URL for top story (unwrap google redirect) and show true host
+  const top = items[0];
+  const topHref = normalizeLink(top.url);
+  const topHost = hostFrom(topHref) || (top.sourceName||'');
+
+  const topEl = ce('div', { className:'al-news-top' });
+  const meta = ce('div', { className:'al-news-meta', textContent:`${top.category||'Update'} · ${fmtRel(top.publishedAt)} · ${topHost}` });
+  const h3 = ce('h3');
+  const aTop = ce('a', { href: topHref, target:'_blank', rel:'noopener', textContent: top.title });
+  h3.append(aTop);
+  const sum = ce('div', { className:'al-news-meta', textContent: top.summary || '' });
+  const actions = ce('div', { className:'al-news-actions' });
+  const read = ce('button', { className:'al-btn primary', textContent:'Read full' });
+  read.addEventListener('click', ()=> window.open(topHref, '_blank'));
+  const share = ce('button', { className:'al-btn', textContent:'Share' });
+  share.addEventListener('click', ()=>{
+    const msg = encodeURIComponent(`${top.title} — ${topHost}\n${topHref}`);
+    window.open(`https://wa.me/?text=${msg}`, '_blank');
+  });
+  actions.append(read, share);
+  topEl.append(meta, h3, sum, actions);
+  els.body.append(topEl);
+
+  // List items
+  const list = ce('div', { className:'al-news-list' });
+  items.slice(1, 5).forEach(it=>{
+    const href = normalizeLink(it.url);
+    const host = hostFrom(href) || (it.sourceName||'');
+    const row = ce('div', { className:'al-news-item' });
+    const a = ce('a', { href, target:'_blank', rel:'noopener' });
+    a.textContent = `• ${it.title} · ${fmtRel(it.publishedAt)} · ${host}`;
+    row.append(a);
+    list.append(row);
+  });
+  els.body.append(list);
+}
+
 
   function open(manual=false){
     state.openedManually = manual;
